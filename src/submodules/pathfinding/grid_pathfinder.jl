@@ -296,12 +296,18 @@ Use this method in conjuction with [`move_along_route!`](@ref).
 function set_target!(
     agent::A,
     target::Dims{D},
-    model::ABM{<:GridSpace{D,P,<:AStar{D}},A},
-) where {D,P,A<:AbstractAgent}
-    model.space.pathfinder.agent_paths[agent.id] =
-        find_path(model.space.pathfinder, agent.pos, target)
+    pathfinder::AStar{D},
+) where {D,A<:AbstractAgent}
+    pathfinder.agent_paths[agent.id] =
+        find_path(pathfinder, agent.pos, target)
 end
 
+
+set_target!(
+    agent::A,
+    target::Dims{D},
+    model::ABM{<:GridSpace{D,P,<:AStar{D}}}
+) where {D,P,A<:AbstractAgent} = set_target!(agent, target, model.space.pathfinder)
 """
     Pathfinding.set_best_target!(agent, targets::Vector{NTuple{D,Int}}, model)
 
@@ -317,24 +323,32 @@ Returns the position of the chosen target.
 function set_best_target!(
     agent::A,
     targets::Vector{Dims{D}},
-    model::ABM{<:GridSpace{D,P,<:AStar{D}},A};
+    pathfinder::AStar{D};
     condition::Symbol = :shortest,
-) where {D,P,A<:AbstractAgent}
+) where {D,A<:AbstractAgent}
     @assert condition ∈ (:shortest, :longest)
     compare = condition == :shortest ? (a, b) -> a < b : (a, b) -> a > b
     best_path = Path{D}()
     best_target = nothing
     for target in targets
-        path = find_path(model.space.pathfinder, agent.pos, target)
+        path = find_path(pathfinder, agent.pos, target)
         if isempty(best_path) || compare(length(path), length(best_path))
             best_path = path
             best_target = target
         end
     end
 
-    model.space.pathfinder.agent_paths[agent.id] = best_path
+    pathfinder.agent_paths[agent.id] = best_path
     return best_target
 end
+
+set_best_target!(
+    agent::A,
+    targets::Vector{Dims{D}},
+    model::ABM{<:GridSpace{D,P,<:AStar{D}},A};
+    condition::Symbol = :shortest,
+) where {D,P,A<:AbstractAgent} =
+    set_best_target!(agent, targets, model.space.pathfinder; condition)
 
 Agents.is_stationary(
     agent::A,
@@ -381,13 +395,19 @@ If the agent does not have a precalculated path or the path is empty, it remains
 """
 function Agents.move_along_route!(
     agent::A,
-    model::ABM{<:GridSpace{D,P,<:AStar{D}},A},
-) where {D,P,A<:AbstractAgent}
-    isempty(agent.id, model.space.pathfinder) && return
+    model::ABM{<:GridSpace{D},A},
+    pathfinder::AStar{D},
+) where {D,A<:AbstractAgent}
+    isempty(agent.id, pathfinder) && return
 
-    move_agent!(agent, first(model.space.pathfinder.agent_paths[agent.id]), model)
-    popfirst!(model.space.pathfinder.agent_paths[agent.id])
+    move_agent!(agent, first(pathfinder.agent_paths[agent.id]), model)
+    popfirst!(pathfinder.agent_paths[agent.id])
 end
+
+Agents.move_along_route!(
+    agent::A,
+    model::ABM{<:GridSpace{D,P,<:AStar{D}},A},
+) where {D,P,A<:AbstractAgent} = Agents.move_along_route!(agent, model, model.space.pathfinder)
 
 function Agents.kill_agent!(
     agent::A,
