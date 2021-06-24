@@ -13,13 +13,14 @@ abstract type DiscreteSpace <: AbstractSpace end
 ValidPos =
     Union{Int,NTuple{N,Int},NTuple{M,<:AbstractFloat},Tuple{Int,Int,Float64}} where {N,M}
 
-struct AgentBasedModel{S<:SpaceType,A<:AbstractAgent,F,P,R<:AbstractRNG}
+struct AgentBasedModel{S<:SpaceType,A<:AbstractAgent,F,P,R<:AbstractRNG,W}
     agents::Dict{Int,A}
     space::S
     scheduler::F
     properties::P
     rng::R
     maxid::Base.RefValue{Int64}
+    pathfinder::W
 end
 
 const ABM = AgentBasedModel
@@ -84,12 +85,13 @@ function AgentBasedModel(
     scheduler::F = Schedulers.fastest,
     properties::P = nothing,
     rng::R = Random.default_rng(),
+    pathfinder::W = nothing,
     warn = true,
-) where {A<:AbstractAgent,S<:SpaceType,F,P,R<:AbstractRNG}
+) where {A<:AbstractAgent,S<:SpaceType,F,P,R<:AbstractRNG,W}
     agent_validator(A, space, warn)
 
     agents = Dict{Int,A}()
-    return ABM{S,A,F,P,R}(agents, space, scheduler, properties, rng, Ref(0))
+    return ABM{S,A,F,P,R,W}(agents, space, scheduler, properties, rng, Ref(0), pathfinder)
 end
 
 function AgentBasedModel(agent::AbstractAgent, args...; kwargs...)
@@ -156,6 +158,8 @@ function Base.getproperty(m::ABM{S,A,F,P,R}, s::Symbol) where {S,A,F,P,R}
         return getfield(m, :rng)
     elseif s === :maxid
         return getfield(m, :maxid)
+    elseif s === :pathfinder
+        return getfield(m, :pathfinder)
     elseif P <: Dict
         return getindex(getfield(m, :properties), s)
     else # properties is assumed to be a struct

@@ -5,7 +5,7 @@ taken by an agent in a `D` dimensional [`GridSpace`](@ref).
 """
 const Path{D} = MutableLinkedList{Dims{D}}
 
-struct Pathfinder{W<:Union{BitArray,Nothing},M<:Union{CostMetric,Nothing}}
+struct Profile{W<:Union{BitArray,Nothing},M<:Union{CostMetric,Nothing}}
     diagonal_movement::Bool
     admissibility::Float64
     walkable::W
@@ -35,13 +35,13 @@ for more.
     to use for approximating the distance between two points. This defaults
     to [`Pathfinding.DirectDistance`](@ref) with appropriate dimensionality.
 """
-function Pathfinder(;
+function Profile(;
     diagonal_movement::Bool = true,
     admissibility::Float64 = 0.0,
     walkable::W = nothing,
     cost_metric::M = nothing,
 ) where {W<:Union{BitArray,Nothing},M<:Union{CostMetric,Nothing}}
-    return Pathfinder(diagonal_movement, admissibility, walkable, cost_metric)
+    return Profile(diagonal_movement, admissibility, walkable, cost_metric)
 end
 
 struct AStar{D,P,M}
@@ -115,7 +115,7 @@ function AStar(
     )
 end
 
-function AStar(dims::Dims{D}, periodic::Bool, pathfinder::Pathfinder) where {D}
+function AStar(dims::Dims{D}, periodic::Bool, pathfinder::Profile) where {D}
     walkable = pathfinder.walkable === nothing ? trues(dims) : pathfinder.walkable
 
     metric =
@@ -285,115 +285,3 @@ end
     (cur .+ β.I for β in pathfinder.neighborhood)
 @inline inbounds(n, pathfinder, closed) =
     all(1 .<= n .<= pathfinder.grid_dims) && pathfinder.walkable[n...] && n ∉ closed
-
-"""
-    Pathfinding.set_target!(agent, target::NTuple{D,Int}, model)
-Calculate and store the shortest path to move the agent from its current position to
-`target` (a grid position e.g. `(1, 5)`) for models using [`Pathfinding`](@ref).
-
-Use this method in conjuction with [`move_along_route!`](@ref).
-"""
-function set_target!(
-    agent::A,
-    target::Dims{D},
-    model::ABM{<:GridSpace{D,P,<:AStar{D}},A},
-) where {D,P,A<:AbstractAgent}
-    model.space.pathfinder.agent_paths[agent.id] =
-        find_path(model.space.pathfinder, agent.pos, target)
-end
-
-"""
-    Pathfinding.set_best_target!(agent, targets::Vector{NTuple{D,Int}}, model)
-
-Calculate and store the best path to move the agent from its current position to
-a chosen target position taken from `targets` for models using [`Pathfinding`](@ref).
-
-The `condition = :shortest` keyword retuns the shortest path which is shortest
-(allowing for the conditions of the models pathfinder) out of the possible target
-positions. Alternatively, the `:longest` path may also be requested.
-
-Returns the position of the chosen target.
-"""
-function set_best_target!(
-    agent::A,
-    targets::Vector{Dims{D}},
-    model::ABM{<:GridSpace{D,P,<:AStar{D}},A};
-    condition::Symbol = :shortest,
-) where {D,P,A<:AbstractAgent}
-    @assert condition ∈ (:shortest, :longest)
-    compare = condition == :shortest ? (a, b) -> a < b : (a, b) -> a > b
-    best_path = Path{D}()
-    best_target = nothing
-    for target in targets
-        path = find_path(model.space.pathfinder, agent.pos, target)
-        if isempty(best_path) || compare(length(path), length(best_path))
-            best_path = path
-            best_target = target
-        end
-    end
-
-    model.space.pathfinder.agent_paths[agent.id] = best_path
-    return best_target
-end
-
-Agents.is_stationary(
-    agent::A,
-    model::ABM{<:GridSpace{D,P,<:AStar{D}},A},
-) where {D,P,A<:AbstractAgent} = isempty(agent.id, model.space.pathfinder)
-
-Base.isempty(id::Int, pathfinder::AStar) =
-    !haskey(pathfinder.agent_paths, id) || isempty(pathfinder.agent_paths[id])
-
-"""
-    Pathfinding.heightmap(model)
-Return the heightmap of a [`Pathfinding.Pathfinder`](@ref) if the
-[`Pathfinding.HeightMap`](@ref) metric is in use, `nothing` otherwise.
-
-It is possible to mutate the map directly, for example
-`Pathfinding.heightmap(model)[15, 40] = 115`
-or `Pathfinding.heightmap(model) .= rand(50, 50)`. If this is mutated,
-a new path needs to be planned using [`Pathfinding.set_target!`](@ref).
-"""
-function heightmap(model::ABM{<:GridSpace{D,P,<:AStar{D}}}) where {D,P}
-    if model.space.pathfinder.cost_metric isa HeightMap
-        return model.space.pathfinder.cost_metric.hmap
-    else
-        return nothing
-    end
-end
-
-"""
-    Pathfinding.walkmap(model)
-Return the walkable map of a [`Pathfinding.Pathfinder`](@ref).
-
-It is possible to mutate the map directly, for example
-`Pathfinding.walkmap(model)[15, 40] = false`.
-If this is mutated, a new path needs to be planned using [`Pathfinding.set_target!`](@ref).
-"""
-walkmap(model::ABM{<:GridSpace{D,P,<:AStar{D}}}) where {D,P} =
-    model.space.pathfinder.walkable
-
-"""
-    move_along_route!(agent, model_with_pathfinding)
-Move `agent` for one step along the route toward its target set by [`Pathfinding.set_target!`](@ref)
-for agents on a [`GridSpace`](@ref) using a [`Pathfinding.Pathfinder`](@ref).
-If the agent does not have a precalculated path or the path is empty, it remains stationary.
-"""
-function Agents.move_along_route!(
-    agent::A,
-    model::ABM{<:GridSpace{D,P,<:AStar{D}},A},
-) where {D,P,A<:AbstractAgent}
-    isempty(agent.id, model.space.pathfinder) && return
-
-    move_agent!(agent, first(model.space.pathfinder.agent_paths[agent.id]), model)
-    popfirst!(model.space.pathfinder.agent_paths[agent.id])
-end
-
-function Agents.kill_agent!(
-    agent::A,
-    model::ABM{<:GridSpace{D,P,<:AStar{D}},A},
-) where {D,P,A<:AbstractAgent}
-    delete!(model.space.pathfinder.agent_paths, agent.id)
-    delete!(model.agents, agent.id)
-    Agents.remove_agent_from_space!(agent, model)
-end
